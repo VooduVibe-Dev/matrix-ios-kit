@@ -15,11 +15,12 @@
  */
 
 #import "MXKViewController.h"
+#import <WebKit/WebKit.h>
 
 /**
  'MXKWebViewViewController' instance is used to display a webview.
  */
-@interface MXKWebViewViewController : MXKViewController <UIWebViewDelegate>
+@interface MXKWebViewViewController : MXKViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler>
 {
 @protected
     /**
@@ -30,7 +31,7 @@
     /**
      The content of this screen is fully displayed by this webview
      */
-    UIWebView *webView;
+    WKWebView *webView;
 }
 
 /**

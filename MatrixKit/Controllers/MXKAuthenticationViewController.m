@@ -1552,7 +1552,7 @@ NSString *const MXKAuthErrorDomain = @"MXKAuthErrorDomain";
         // Report the new account in account manager
         MXKAccount *account = [[MXKAccount alloc] initWithCredentials:credentials];
         account.identityServerURL = _identityServerTextField.text;
-        
+        account.pushGatewayURL =[[NSUserDefaults standardUserDefaults]valueForKey:@"pushGatewayURL"];
         [[MXKAccountManager sharedManager] addAccount:account andOpenSession:YES];
         
         if (_delegate)

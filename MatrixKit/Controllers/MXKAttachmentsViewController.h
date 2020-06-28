@@ -18,7 +18,7 @@ limitations under the License.
 
 #import "MXKViewController.h"
 #import "MXKAttachment.h"
-
+#import <AVKit/AVKit.h>
 @protocol MXKAttachmentsViewControllerDelegate;
 
 /**

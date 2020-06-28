@@ -15,9 +15,8 @@
  */
 
 #import <MatrixSDK/MatrixSDK.h>
-
-@interface MXKAuthenticationFallbackWebView : UIWebView <UIWebViewDelegate>
-
+#import <WebKit/WebKit.h>
+@interface MXKAuthenticationFallbackWebView : WKWebView <WKNavigationDelegate>
 /**
  Open authentication fallback page into the webview.
  

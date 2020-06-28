@@ -18,6 +18,19 @@
 
 @implementation MXKMediaCollectionViewCell
 
+- (void)prepareForReuse
+{
+    [super prepareForReuse];
+    [self.moviePlayer.player pause];
+    self.moviePlayer.player = nil;
+    self.moviePlayer = nil;
+}
+
+- (void)dealloc
+{
+    [self.moviePlayer.player pause];
+    self.moviePlayer.player = nil;
+}
 - (instancetype)initWithFrame:(CGRect)frame
 {
     // Check whether a xib is defined
@@ -35,4 +48,5 @@
 }
 
 @end
+
 

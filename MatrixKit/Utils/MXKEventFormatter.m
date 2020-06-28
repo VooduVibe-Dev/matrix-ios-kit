@@ -32,17 +32,17 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
      The matrix session. Used to get contextual data.
      */
     MXSession *mxSession;
-
+    
     /**
      The Markdown to HTML parser.
      */
     GHMarkdownParser *markdownParser;
-
+    
     /**
      The default CSS converted in DTCoreText object.
      */
     DTCSSStylesheet *dtCSS;
-
+    
     /**
      Regex for finding Matrix ids in events content.
      */
@@ -50,6 +50,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     NSRegularExpression *roomIdRegex;
     NSRegularExpression *roomAliasRegex;
     NSRegularExpression *eventIdRegex;
+    NSMutableArray *alterlastEventTextMessage;
 }
 @end
 
@@ -63,11 +64,11 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
         mxSession = matrixSession;
         
         [self initDateTimeFormatters];
-
+        
         markdownParser = [[GHMarkdownParser alloc] init];
         markdownParser.options = kGHMarkdownAutoLink | kGHMarkdownNoSmartQuotes;
         markdownParser.githubFlavored = YES;        // This is the Markdown flavor we use in Matrix apps
-
+        
         // Use the same list as matrix-react-sdk ( https://github.com/matrix-org/matrix-react-sdk/blob/24223ae2b69debb33fa22fcda5aeba6fa93c93eb/src/HtmlUtils.js#L25 )
         _allowedHTMLTags = @[
                              @"font", // custom to matrix for IRC-style font coloring
@@ -77,17 +78,17 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                              @"nl", @"li", @"b", @"i", @"u", @"strong", @"em", @"strike", @"code", @"hr", @"br", @"div",
                              @"table", @"thead", @"caption", @"tbody", @"tr", @"th", @"td", @"pre"
                              ];
-
+        
         self.defaultCSS = @" \
-            pre,code { \
-                background-color: #eeeeee; \
-                display: inline; \
-                font-family: monospace; \
-                white-space: pre; \
-                -coretext-fontname: Menlo-Regular; \
-                font-size: small; \
-            }";
-
+        pre,code { \
+        background-color: #eeeeee; \
+        display: inline; \
+        font-family: monospace; \
+        white-space: pre; \
+        -coretext-fontname: Menlo-Regular; \
+        font-size: small; \
+        }";
+        
         // Set default colors
         _defaultTextColor = [UIColor blackColor];
         _subTitleTextColor = [UIColor blackColor];
@@ -231,7 +232,37 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
 - (NSString*)senderDisplayNameForEvent:(MXEvent*)event withRoomState:(MXRoomState*)roomState
 {
     // Consider first the current display name defined in provided room state (Note: this room state is supposed to not take the new event into account)
-    NSString *senderDisplayName = [roomState memberName:event.sender];
+    NSString *senderDisplayName;
+    NSString *current_uid;
+    NSString *uid;
+    
+    NSData *data = [[roomState memberName:event.sender] dataUsingEncoding:NSUTF8StringEncoding];
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if ([json isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *typCastedJson = (NSDictionary*)json;
+        int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+        //if nearby then check if user is contact and display name based on that.
+        if ([[[NSUserDefaults standardUserDefaults] valueForKey:@"ComingFrom"] isEqualToString:@"near_by"]) {
+            current_uid = [NSString stringWithFormat:@"%@", [typCastedJson valueForKey:@"uid"]];
+            uid = [NSString stringWithFormat:@"%@", [[NSUserDefaults standardUserDefaults] valueForKey:@"UID"]];
+            if([current_uid isEqualToString:uid]){
+                senderDisplayName = [typCastedJson valueForKey:@"n"];
+            }else{
+                senderDisplayName = [typCastedJson valueForKey:@"a"];
+            }
+        }else{
+            if(sn == 0){
+                senderDisplayName = [typCastedJson valueForKey:@"n"];
+            }else{
+                if ([[[NSUserDefaults standardUserDefaults] valueForKey:@"ComingFrom"] isEqualToString:@"react"]) {
+                    senderDisplayName = [typCastedJson valueForKey:@"n"];
+                }else{
+                    senderDisplayName = [typCastedJson valueForKey:@"a"];
+                }
+            }
+        }
+    }
+    //    NSString *senderDisplayName = [roomState memberName:event.sender];
     // Check whether this sender name is updated by the current event (This happens in case of new joined member)
     NSString* membership;
     MXJSONModelSetString(membership, event.content[@"membership"]);
@@ -241,7 +272,18 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     if (membership && [membership isEqualToString:@"join"] && [displayname length])
     {
         // Use the actual display name
-        senderDisplayName = displayname;
+        NSData *data = [displayname dataUsingEncoding:NSUTF8StringEncoding];
+        id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if ([json isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *typCastedJson = (NSDictionary*)json;
+            int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            if(sn == 0){
+                senderDisplayName = [typCastedJson valueForKey:@"n"];
+            }else{
+                senderDisplayName = [typCastedJson valueForKey:@"a"];
+            }
+        }
+        //        senderDisplayName = displayname;
     }
     return senderDisplayName;
 }
@@ -290,12 +332,13 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     {
         stringFromEvent = attributedStringFromEvent.string;
     }
-
+    
     return stringFromEvent;
 }
 
 - (NSAttributedString *)attributedStringFromEvent:(MXEvent *)event withRoomState:(MXRoomState *)roomState error:(MXKEventFormatterError *)error
 {
+    alterlastEventTextMessage = [[NSMutableArray alloc] init];
     // Check we can output the error
     NSParameterAssert(error);
     
@@ -342,14 +385,26 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     // Prepare returned description
     NSString *displayText = nil;
     NSAttributedString *attributedDisplayText = nil;
-
+    
     // Prepare the display name of the sender
     NSString *senderDisplayName;
     senderDisplayName = roomState ? [self senderDisplayNameForEvent:event withRoomState:roomState] : event.sender;
-    
+    if(![senderDisplayName isKindOfClass:[NSString class]] && senderDisplayName){
+        NSData *data = [senderDisplayName dataUsingEncoding:NSUTF8StringEncoding];
+        id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if ([json isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *typCastedJson = (NSDictionary*)json;
+            int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            if(sn == 0){
+                senderDisplayName = [typCastedJson valueForKey:@"n"];
+            }else{
+                senderDisplayName = [typCastedJson valueForKey:@"a"];
+            }
+        }
+    }
     switch (event.eventType)
     {
-        case MXEventTypeRoomName:
+            case MXEventTypeRoomName:
         {
             NSString *roomName;
             MXJSONModelSetString(roomName, event.content[@"name"]);
@@ -374,7 +429,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomTopic:
+            case MXEventTypeRoomTopic:
         {
             NSString *roomTopic;
             MXJSONModelSetString(roomTopic, event.content[@"topic"]);
@@ -400,225 +455,297 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             
             break;
         }
-        case MXEventTypeRoomMember:
+            case MXEventTypeRoomMember:
         {
-            // Presently only change on membership, display name and avatar are supported
-            
-            // Check whether the sender has updated his profile
-            if (event.isUserProfileChange)
-            {
-                // Is redacted event?
-                if (isRedacted)
-                {
-                    if (!redactedInfo)
-                    {
-                        // Here the event is ignored (no display)
-                        return nil;
-                    }
-                    displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_profile_change_redacted"], senderDisplayName, redactedInfo];
-                }
-                else
-                {
-                    // Check whether the display name has been changed
-                    NSString *displayname;
-                    MXJSONModelSetString(displayname, event.content[@"displayname"]);
-                    NSString *prevDisplayname;
-                    MXJSONModelSetString(prevDisplayname, event.prevContent[@"displayname"]);
-                    
-                    if (!displayname.length)
-                    {
-                        displayname = nil;
-                    }
-                    if (!prevDisplayname.length)
-                    {
-                        prevDisplayname = nil;
-                    }
-                    if ((displayname || prevDisplayname) && ([displayname isEqualToString:prevDisplayname] == NO))
-                    {
-                        if (!prevDisplayname)
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_display_name_set"], event.sender, displayname];
-                        }
-                        else if (!displayname)
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_display_name_removed"], event.sender];
-                        }
-                        else
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_display_name_changed_from"], event.sender, prevDisplayname, displayname];
-                        }
-                    }
-                    
-                    // Check whether the avatar has been changed
-                    NSString *avatar;
-                    MXJSONModelSetString(avatar, event.content[@"avatar_url"]);
-                    NSString *prevAvatar;
-                    MXJSONModelSetString(prevAvatar, event.prevContent[@"avatar_url"]);
-                    
-                    if (!avatar.length)
-                    {
-                        avatar = nil;
-                    }
-                    if (!prevAvatar.length)
-                    {
-                        prevAvatar = nil;
-                    }
-                    if ((prevAvatar || avatar) && ([avatar isEqualToString:prevAvatar] == NO))
-                    {
-                        if (displayText)
-                        {
-                            displayText = [NSString stringWithFormat:@"%@ %@", displayText, [NSBundle mxk_localizedStringForKey:@"notice_avatar_changed_too"]];
-                        }
-                        else
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_avatar_url_changed"], senderDisplayName];
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // Retrieve membership
-                NSString* membership;
-                MXJSONModelSetString(membership, event.content[@"membership"]);
-                
-                // Prepare targeted member display name
-                NSString *targetDisplayName = event.stateKey;
-                
-                // Retrieve content displayname
-                NSString *contentDisplayname;
-                MXJSONModelSetString(contentDisplayname, event.content[@"displayname"]);
-                NSString *prevContentDisplayname;
-                MXJSONModelSetString(prevContentDisplayname, event.prevContent[@"displayname"]);
-                
-                // Consider here a membership change
-                if ([membership isEqualToString:@"invite"])
-                {
-                    if (event.content[@"third_party_invite"])
-                    {
-                        displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_third_party_registered_invite"], targetDisplayName, event.content[@"third_party_invite"][@"display_name"]];
-                    }
-                    else
-                    {
-                        if ([MXCallManager isConferenceUser:event.stateKey])
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_conference_call_request"], senderDisplayName];
-                        }
-                        else
-                        {
-                            // The targeted member display name (if any) is available in content
-                            if (contentDisplayname.length)
-                            {
-                                targetDisplayName = contentDisplayname;
-                            }
-                            
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_invite"], senderDisplayName, targetDisplayName];
-                        }
-                    }
-                }
-                else if ([membership isEqualToString:@"join"])
-                {
-                    if ([MXCallManager isConferenceUser:event.stateKey])
-                    {
-                        displayText = [NSBundle mxk_localizedStringForKey:@"notice_conference_call_started"];
-                    }
-                    else
-                    {
-                        // The targeted member display name (if any) is available in content
-                        if (contentDisplayname.length)
-                        {
-                            targetDisplayName = contentDisplayname;
-                        }
-
-                        displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_join"], targetDisplayName];
-                    }
-                }
-                else if ([membership isEqualToString:@"leave"])
-                {
-                    NSString *prevMembership = nil;
-                    if (event.prevContent)
-                    {
-                        MXJSONModelSetString(prevMembership, event.prevContent[@"membership"]);
-                    }
-                    
-                    // The targeted member display name (if any) is available in prevContent
-                    if (prevContentDisplayname.length)
-                    {
-                        targetDisplayName = prevContentDisplayname;
-                    }
-                    
-                    if ([event.sender isEqualToString:event.stateKey])
-                    {
-                        if ([MXCallManager isConferenceUser:event.stateKey])
-                        {
-                            displayText = [NSBundle mxk_localizedStringForKey:@"notice_conference_call_finished"];
-                        }
-                        else
-                        {
-                            if (prevMembership && [prevMembership isEqualToString:@"invite"])
-                            {
-                                displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reject"], targetDisplayName];
-                            }
-                            else
-                            {
-                               displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_leave"], targetDisplayName];
-                            }
-                        }
-                    }
-                    else if (prevMembership)
-                    {
-                        if ([prevMembership isEqualToString:@"invite"])
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_withdraw"], senderDisplayName, targetDisplayName];
-                            if (event.content[@"reason"])
-                            {
-                                displayText = [displayText stringByAppendingString:[NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reason"], event.content[@"reason"]]];
-                            }
-
-                        }
-                        else if ([prevMembership isEqualToString:@"join"])
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_kick"], senderDisplayName, targetDisplayName];
-                            if (event.content[@"reason"])
-                            {
-                                displayText = [displayText stringByAppendingString:[NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reason"], event.content[@"reason"]]];
-                            }
-                        }
-                        else if ([prevMembership isEqualToString:@"ban"])
-                        {
-                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_unban"], senderDisplayName, targetDisplayName];
-                        }
-                    }
-                }
-                else if ([membership isEqualToString:@"ban"])
-                {
-                    // The targeted member display name (if any) is available in prevContent
-                    if (prevContentDisplayname.length)
-                    {
-                        targetDisplayName = prevContentDisplayname;
-                    }
-                    
-                    displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_ban"], senderDisplayName, targetDisplayName];
-                    if (event.content[@"reason"])
-                    {
-                        displayText = [displayText stringByAppendingString:[NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reason"], event.content[@"reason"]]];
-                    }
-                }
-                
-                // Append redacted info if any
-                if (redactedInfo)
-                {
-                    displayText = [NSString stringWithFormat:@"%@ %@", displayText, redactedInfo];
-                }
-            }
-            
-            if (!displayText)
-            {
-                *error = MXKEventFormatterErrorUnexpected;
-            }
+            //            // Presently only change on membership, display name and avatar are supported
+            //
+            //            // Check whether the sender has updated his profile
+            //            if (event.isUserProfileChange)
+            //            {
+            //                // Is redacted event?
+            //                if (isRedacted)
+            //                {
+            //                    if (!redactedInfo)
+            //                    {
+            //                        // Here the event is ignored (no display)
+            //                        return nil;
+            //                    }
+            //                    displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_profile_change_redacted"], senderDisplayName, redactedInfo];
+            //                }
+            //                else
+            //                {
+            //                    // Check whether the display name has been changed
+            //                    NSString *displayname;
+            ////                    MXJSONModelSetString(displayname, event.content[@"displayname"]);
+            //                    NSString *prevDisplayname;
+            ////                    MXJSONModelSetString(prevDisplayname, event.prevContent[@"displayname"]);
+            //
+            //                    if (event.content[@"displayname"]) {
+            //                        NSData *data = [ event.content[@"displayname"] dataUsingEncoding:NSUTF8StringEncoding];
+            //                        id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            //                        if ([json isKindOfClass:[NSDictionary class]]) {
+            //                            NSDictionary *typCastedJson = (NSDictionary*)json;
+            //                            int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            //                            if(sn == 0){
+            //                                MXJSONModelSetString(displayname, [typCastedJson valueForKey:@"n"]);
+            //                            }else{
+            //                                MXJSONModelSetString(displayname, [typCastedJson valueForKey:@"a"]);
+            //                            }
+            //                        }
+            //                    } else
+            //                        MXJSONModelSetString(displayname, event.content[@"displayname"]);
+            //
+            //                    if (event.prevContent[@"displayname"]) {
+            //                        NSData *data = [ event.prevContent[@"displayname"] dataUsingEncoding:NSUTF8StringEncoding];
+            //                        id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            //                        if ([json isKindOfClass:[NSDictionary class]]) {
+            //                            NSDictionary *typCastedJson = (NSDictionary*)json;
+            //                            int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            //                            if(sn == 0){
+            //                                MXJSONModelSetString(prevDisplayname, [typCastedJson valueForKey:@"n"]);
+            //                            }else{
+            //                                MXJSONModelSetString(prevDisplayname, [typCastedJson valueForKey:@"a"]);
+            //                            }
+            //                        }
+            //                    } else
+            //                        MXJSONModelSetString(prevDisplayname, event.prevContent[@"displayname"]);
+            //
+            //                    if (!displayname.length)
+            //                    {
+            //                        displayname = nil;
+            //                    }
+            //                    if (!prevDisplayname.length)
+            //                    {
+            //                        prevDisplayname = nil;
+            //                    }
+            //                    if ((displayname || prevDisplayname) && ([displayname isEqualToString:prevDisplayname] == NO))
+            //                    {
+            //                        if (!prevDisplayname)
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_display_name_set"], event.sender, displayname];
+            //                        }
+            //                        else if (!displayname)
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_display_name_removed"], event.sender];
+            //                        }
+            //                        else
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_display_name_changed_from"], event.sender, prevDisplayname, displayname];
+            //                        }
+            //                    }
+            //
+            //                    // Check whether the avatar has been changed
+            //                    NSString *avatar;
+            //                    MXJSONModelSetString(avatar, event.content[@"avatar_url"]);
+            //                    NSString *prevAvatar;
+            //                    MXJSONModelSetString(prevAvatar, event.prevContent[@"avatar_url"]);
+            //
+            //                    if (!avatar.length)
+            //                    {
+            //                        avatar = nil;
+            //                    }
+            //                    if (!prevAvatar.length)
+            //                    {
+            //                        prevAvatar = nil;
+            //                    }
+            //                    if ((prevAvatar || avatar) && ([avatar isEqualToString:prevAvatar] == NO))
+            //                    {
+            //                        if (displayText)
+            //                        {
+            //                            displayText = [NSString stringWithFormat:@"%@ %@", displayText, [NSBundle mxk_localizedStringForKey:@"notice_avatar_changed_too"]];
+            //                        }
+            //                        else
+            //                        {
+            //                            NSData *data = [ senderDisplayName dataUsingEncoding:NSUTF8StringEncoding];
+            //                            id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            //                            if ([json isKindOfClass:[NSDictionary class]]) {
+            //                                NSDictionary *typCastedJson = (NSDictionary*)json;
+            //                                int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            //                                if(sn == 0){
+            //                                    senderDisplayName = [typCastedJson valueForKey:@"n"];
+            //                                }else{
+            //                                    senderDisplayName = [typCastedJson valueForKey:@"a"];
+            //                                }
+            //                            }
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_avatar_url_changed"], senderDisplayName];
+            //                        }
+            //                    }
+            //                }
+            //            }
+            //            else
+            //            {
+            //                // Retrieve membership
+            //                NSString* membership;
+            //                MXJSONModelSetString(membership, event.content[@"membership"]);
+            //
+            //                // Prepare targeted member display name
+            //                NSString *targetDisplayName = event.stateKey;
+            //
+            //                // Retrieve content displayname
+            //                NSString *contentDisplayname;
+            //                if (event.content[@"displayname"]) {
+            //                    NSData *data = [event.content[@"displayname"] dataUsingEncoding:NSUTF8StringEncoding];
+            //                    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            //                    if ([json isKindOfClass:[NSDictionary class]]) {
+            //                        NSDictionary *typCastedJson = (NSDictionary*)json;
+            //                        int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            //                        if(sn == 0){
+            //                            MXJSONModelSetString(contentDisplayname, [typCastedJson valueForKey:@"n"]);
+            //                        }else{
+            //                            MXJSONModelSetString(contentDisplayname, [typCastedJson valueForKey:@"a"]);
+            //                        }
+            //                    }
+            //                } else {
+            //                    MXJSONModelSetString(contentDisplayname, event.content[@"displayname"]);
+            //                }
+            ////                MXJSONModelSetString(contentDisplayname, event.content[@"displayname"]);
+            //
+            //                NSString *prevContentDisplayname;
+            //                if (event.prevContent[@"displayname"]) {
+            //                    NSData *data = [event.prevContent[@"displayname"] dataUsingEncoding:NSUTF8StringEncoding];
+            //                    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            //                    if ([json isKindOfClass:[NSDictionary class]]) {
+            //                        NSDictionary *typCastedJson = (NSDictionary*)json;
+            //                        int sn = [[typCastedJson valueForKey:@"sn"] intValue];
+            //                        if(sn == 0){
+            //                            MXJSONModelSetString(prevContentDisplayname, [typCastedJson valueForKey:@"n"]);
+            //                        }else{
+            //                            MXJSONModelSetString(prevContentDisplayname, [typCastedJson valueForKey:@"a"]);
+            //                        }
+            //                    }
+            //                } else {
+            //                    MXJSONModelSetString(prevContentDisplayname, event.prevContent[@"displayname"]);
+            //                }
+            ////                MXJSONModelSetString(prevContentDisplayname, event.prevContent[@"displayname"]);
+            //
+            //                // Consider here a membership change
+            //                if ([membership isEqualToString:@"invite"])
+            //                {
+            //                    if (event.content[@"third_party_invite"])
+            //                    {
+            //                        displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_third_party_registered_invite"], targetDisplayName, event.content[@"third_party_invite"][@"display_name"]];
+            //                    }
+            //                    else
+            //                    {
+            //                        if ([MXCallManager isConferenceUser:event.stateKey])
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_conference_call_request"], senderDisplayName];
+            //                        }
+            //                        else
+            //                        {
+            //                            // The targeted member display name (if any) is available in content
+            //                            if (contentDisplayname.length)
+            //                            {
+            //                                targetDisplayName = contentDisplayname;
+            //                            }
+            //
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_invite"], senderDisplayName, targetDisplayName];
+            //                        }
+            //                    }
+            //                }
+            //                else if ([membership isEqualToString:@"join"])
+            //                {
+            //                    if ([MXCallManager isConferenceUser:event.stateKey])
+            //                    {
+            //                        displayText = [NSBundle mxk_localizedStringForKey:@"notice_conference_call_started"];
+            //                    }
+            //                    else
+            //                    {
+            //                        // The targeted member display name (if any) is available in content
+            //                        if (contentDisplayname.length)
+            //                        {
+            //                            targetDisplayName = contentDisplayname;
+            //                        }
+            //
+            //                        displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_join"], targetDisplayName];
+            //                    }
+            //                }
+            //                else if ([membership isEqualToString:@"leave"])
+            //                {
+            //                    NSString *prevMembership = nil;
+            //                    if (event.prevContent)
+            //                    {
+            //                        MXJSONModelSetString(prevMembership, event.prevContent[@"membership"]);
+            //                    }
+            //
+            //                    // The targeted member display name (if any) is available in prevContent
+            //                    if (prevContentDisplayname.length)
+            //                    {
+            //                        targetDisplayName = prevContentDisplayname;
+            //                    }
+            //
+            //                    if ([event.sender isEqualToString:event.stateKey])
+            //                    {
+            //                        if ([MXCallManager isConferenceUser:event.stateKey])
+            //                        {
+            //                            displayText = [NSBundle mxk_localizedStringForKey:@"notice_conference_call_finished"];
+            //                        }
+            //                        else
+            //                        {
+            //                            if (prevMembership && [prevMembership isEqualToString:@"invite"])
+            //                            {
+            //                                displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reject"], targetDisplayName];
+            //                            }
+            //                            else
+            //                            {
+            //                               displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_leave"], targetDisplayName];
+            //                            }
+            //                        }
+            //                    }
+            //                    else if (prevMembership)
+            //                    {
+            //                        if ([prevMembership isEqualToString:@"invite"])
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_withdraw"], senderDisplayName, targetDisplayName];
+            //                            if (event.content[@"reason"])
+            //                            {
+            //                                displayText = [displayText stringByAppendingString:[NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reason"], event.content[@"reason"]]];
+            //                            }
+            //
+            //                        }
+            //                        else if ([prevMembership isEqualToString:@"join"])
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_kick"], senderDisplayName, targetDisplayName];
+            ////                            if (event.content[@"reason"])
+            ////                            {
+            ////                                displayText = [displayText stringByAppendingString:[NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reason"], event.content[@"reason"]]];
+            ////                            }
+            //                        }
+            //                        else if ([prevMembership isEqualToString:@"ban"])
+            //                        {
+            //                            displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_unban"], senderDisplayName, targetDisplayName];
+            //                        }
+            //                    }
+            //                }
+            //                else if ([membership isEqualToString:@"ban"])
+            //                {
+            //                    // The targeted member display name (if any) is available in prevContent
+            //                    if (prevContentDisplayname.length)
+            //                    {
+            //                        targetDisplayName = prevContentDisplayname;
+            //                    }
+            //
+            //                    displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_ban"], senderDisplayName, targetDisplayName];
+            //                    if (event.content[@"reason"])
+            //                    {
+            //                        displayText = [displayText stringByAppendingString:[NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_reason"], event.content[@"reason"]]];
+            //                    }
+            //                }
+            //
+            //                // Append redacted info if any
+            //                if (redactedInfo)
+            //                {
+            //                    displayText = [NSString stringWithFormat:@"%@ %@", displayText, redactedInfo];
+            //                }
+            //            }
+            //
+            //            if (!displayText)
+            //            {
+            //                *error = MXKEventFormatterErrorUnexpected;
+            //            }
             break;
         }
-        case MXEventTypeRoomCreate:
+            case MXEventTypeRoomCreate:
         {
             NSString *creatorId;
             MXJSONModelSetString(creatorId, event.content[@"creator"]);
@@ -634,7 +761,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomJoinRules:
+            case MXEventTypeRoomJoinRules:
         {
             NSString *joinRule;
             MXJSONModelSetString(joinRule, event.content[@"join_rule"]);
@@ -650,7 +777,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomPowerLevels:
+            case MXEventTypeRoomPowerLevels:
         {
             displayText = [NSBundle mxk_localizedStringForKey:@"notice_room_power_level_intro"];
             NSDictionary *users;
@@ -707,7 +834,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomAliases:
+            case MXEventTypeRoomAliases:
         {
             NSArray *aliases;
             MXJSONModelSetArray(aliases, event.content[@"aliases"]);
@@ -722,13 +849,13 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomEncrypted:
+            case MXEventTypeRoomEncrypted:
         {
             // E2e encryption is not yet supported
             displayText = [NSBundle mxk_localizedStringForKey:@"notice_encrypted_message"];
             break;
         }
-        case MXEventTypeRoomHistoryVisibility:
+            case MXEventTypeRoomHistoryVisibility:
         {
             if (isRedacted)
             {
@@ -749,7 +876,8 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                     }
                     else if ([historyVisibility isEqualToString:kMXRoomHistoryVisibilityShared])
                     {
-                        formattedString = [NSBundle mxk_localizedStringForKey:@"notice_room_history_visible_to_members"];
+                        //formattedString = [NSBundle mxk_localizedStringForKey:@"notice_room_history_visible_to_members"];
+                        formattedString = @"";
                     }
                     else if ([historyVisibility isEqualToString:kMXRoomHistoryVisibilityInvited])
                     {
@@ -768,7 +896,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomMessage:
+            case MXEventTypeRoomMessage:
         {
             // Is redacted?
             if (isRedacted)
@@ -784,10 +912,10 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             {
                 NSString *msgtype;
                 MXJSONModelSetString(msgtype, event.content[@"msgtype"]);
-
+                
                 NSString *body;
                 BOOL isHTML = NO;
-
+                
                 // Use the HTML formatted string if provided
                 if ([event.content[@"format"] isEqualToString:kMXRoomMessageFormatHTML]
                     && [event.content[@"formatted_body"] isKindOfClass:[NSString class]])
@@ -799,7 +927,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                 {
                     body = event.content[@"body"];
                 }
-
+                
                 if (body)
                 {
                     if ([msgtype isEqualToString:kMXMessageTypeEmote])
@@ -879,7 +1007,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                             *error = MXKEventFormatterErrorUnsupported;
                         }
                     }
-
+                    
                     if (isHTML)
                     {
                         // Build the attributed string from the HTML string
@@ -894,7 +1022,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomMessageFeedback:
+            case MXEventTypeRoomMessageFeedback:
         {
             NSString *type;
             MXJSONModelSetString(type, event.content[@"type"]);
@@ -912,21 +1040,21 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeRoomRedaction:
+            case MXEventTypeRoomRedaction:
         {
             NSString *eventId = event.redacts;
             displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_redaction"], senderDisplayName, eventId];
             break;
         }
-        case MXEventTypeRoomThirdPartyInvite:
+            case MXEventTypeRoomThirdPartyInvite:
         {
             displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_room_third_party_invite"], senderDisplayName, event.content[@"display_name"]];
             break;
         }
-        case MXEventTypeCallInvite:
+            case MXEventTypeCallInvite:
         {
             MXCallInviteEventContent *callInviteEventContent = [MXCallInviteEventContent modelFromJSON:event.content];
-
+            
             if (callInviteEventContent.isVideoCall)
             {
                 displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_placed_video_call"], senderDisplayName];
@@ -937,22 +1065,22 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
             break;
         }
-        case MXEventTypeCallAnswer:
+            case MXEventTypeCallAnswer:
         {
             displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_answered_video_call"], senderDisplayName];
             break;
         }
-        case MXEventTypeCallHangup:
+            case MXEventTypeCallHangup:
         {
             displayText = [NSString stringWithFormat:[NSBundle mxk_localizedStringForKey:@"notice_ended_video_call"], senderDisplayName];
             break;
         }
-
+            
         default:
             *error = MXKEventFormatterErrorUnknownEventType;
             break;
     }
-
+    
     if (!attributedDisplayText && displayText)
     {
         // Build the attributed string with the right font and color for the event
@@ -973,13 +1101,13 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             
             switch (*error)
             {
-                case MXKEventFormatterErrorUnsupported:
+                    case MXKEventFormatterErrorUnsupported:
                     shortDescription = [NSBundle mxk_localizedStringForKey:@"notice_error_unsupported_event"];
                     break;
-                case MXKEventFormatterErrorUnexpected:
+                    case MXKEventFormatterErrorUnexpected:
                     shortDescription = [NSBundle mxk_localizedStringForKey:@"notice_error_unexpected_event"];
                     break;
-                case MXKEventFormatterErrorUnknownEventType:
+                    case MXKEventFormatterErrorUnknownEventType:
                     shortDescription = [NSBundle mxk_localizedStringForKey:@"notice_error_unknown_event_type"];
                     break;
                     
@@ -997,7 +1125,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                 // Return a short error description
                 displayText = shortDescription;
             }
-
+            
             // Build the attributed string with the right font for the event
             attributedDisplayText = [self renderString:displayText forEvent:event];
         }
@@ -1015,27 +1143,27 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     }
     
     NSMutableAttributedString *str = [[NSMutableAttributedString alloc] initWithString:string];
-
+    
     NSRange wholeString = NSMakeRange(0, str.length);
-
+    
     // Apply color and font corresponding to the event state
     [str addAttribute:NSForegroundColorAttributeName value:[self textColorForEvent:event] range:wholeString];
     [str addAttribute:NSFontAttributeName value:[self fontForEvent:event] range:wholeString];
-
+    
     // If enabled, make links clickable
     if (!([[_settings httpLinkScheme] isEqualToString: @"http"] &&
           [[_settings httpsLinkScheme] isEqualToString: @"https"]))
     {
         NSError *error = NULL;
         NSDataDetector *detector = [NSDataDetector dataDetectorWithTypes:NSTextCheckingTypeLink error:&error];
-
+        
         NSArray *matches = [detector matchesInString:[str string] options:0 range:wholeString];
         for (NSTextCheckingResult *match in matches)
         {
             NSRange matchRange = [match range];
             NSURL *matchUrl = [match URL];
             NSURLComponents *url = [[NSURLComponents new] initWithURL:matchUrl resolvingAgainstBaseURL:NO];
-
+            
             if (url)
             {
                 if ([url.scheme isEqualToString: @"http"])
@@ -1046,7 +1174,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                 {
                     url.scheme = [_settings httpsLinkScheme];
                 }
-
+                
                 if (url.URL)
                 {
                     [str addAttribute:NSLinkAttributeName value:url.URL range:matchRange];
@@ -1054,7 +1182,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             }
         }
     }
-
+    
     // Apply additional treatments
     return [self postRenderAttributedString:str];
 }
@@ -1063,7 +1191,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
 {
     // Do some sanitisation before rendering the string
     NSString *html = [self sanitiseHTML:htmlString];
-
+    
     // Apply the css style that corresponds to the event state
     UIFont *font = [self fontForEvent:event];
     NSDictionary *options = @{
@@ -1075,7 +1203,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
                               DTDefaultLinkDecoration: @(NO),
                               DTDefaultStyleSheet: dtCSS
                               };
-
+    
     // Do not use the default HTML renderer of NSAttributedString because this method
     // runs on the UI thread which we want to avoid because renderHTMLString is called
     // most of the time from a background thread.
@@ -1084,10 +1212,10 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     // that could happen with the default HTML renderer of NSAttributedString which is a
     // webview.
     NSAttributedString *str = [[NSAttributedString alloc] initWithHTMLData:[html dataUsingEncoding:NSUTF8StringEncoding] options:options documentAttributes:NULL];
-
+    
     // Apply additional treatments
     str = [self postRenderAttributedString:str];
-
+    
     // DTCoreText adds a newline at the end of plain text ( https://github.com/Cocoanetics/DTCoreText/issues/779 )
     // or after a blockquote section.
     // Trim trailing newlines
@@ -1102,31 +1230,31 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     }
     
     NSMutableAttributedString *postRenderAttributedString;
-
+    
     // If enabled, make user id clickable
     if (userIdRegex)
     {
         [self createLinksInAttributedString:attributedString matchingRegex:userIdRegex withWorkingAttributedString:&postRenderAttributedString];
     }
-
+    
     // If enabled, make room id clickable
     if (roomIdRegex)
     {
         [self createLinksInAttributedString:attributedString matchingRegex:roomIdRegex withWorkingAttributedString:&postRenderAttributedString];
     }
-
+    
     // If enabled, make room alias clickable
     if (roomAliasRegex)
     {
         [self createLinksInAttributedString:attributedString matchingRegex:roomAliasRegex withWorkingAttributedString:&postRenderAttributedString];
     }
-
+    
     // If enabled, make event id clickable
     if (eventIdRegex)
     {
         [self createLinksInAttributedString:attributedString matchingRegex:eventIdRegex withWorkingAttributedString:&postRenderAttributedString];
     }
-
+    
     return postRenderAttributedString ? postRenderAttributedString : attributedString;
 }
 
@@ -1134,18 +1262,18 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
 {
     // Enumerate each string matching the regex
     [regex enumerateMatchesInString:attributedString.string options:0 range:NSMakeRange(0, attributedString.length) usingBlock:^(NSTextCheckingResult *match, NSMatchingFlags flags, BOOL *stop) {
-
+        
         // Do not create a link if there is already one on the found match
         __block BOOL hasAlreadyLink = NO;
         [attributedString enumerateAttributesInRange:match.range options:0 usingBlock:^(NSDictionary<NSString *,id> * _Nonnull attrs, NSRange range, BOOL * _Nonnull stop) {
-
+            
             if (attrs[NSLinkAttributeName])
             {
                 hasAlreadyLink = YES;
                 *stop = YES;
             }
         }];
-
+        
         if (!hasAlreadyLink)
         {
             // Create the output string only if it is necessary because attributed strings cost CPU
@@ -1153,7 +1281,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             {
                 *mutableAttributedString = [[NSMutableAttributedString alloc] initWithAttributedString:attributedString];
             }
-
+            
             // Make the link clickable
             // Caution: We need here to escape the non-ASCII characters (like '#' in room alias)
             // to convert the link into a legal URL string.
@@ -1167,13 +1295,13 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
 - (NSAttributedString*)removeTrailingNewlines:(NSAttributedString*)attributedString
 {
     NSMutableAttributedString *str = [[NSMutableAttributedString alloc] initWithAttributedString:attributedString];
-
+    
     // Trim trailing whitespace and newlines in the string content
     while ([str.string hasSuffixCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]])
     {
         [str deleteCharactersInRange:NSMakeRange(str.length - 1, 1)];
     }
-
+    
     // New lines may have also been introduced by the paragraph style
     // Make sure the last paragraph style has no spacing
     [str enumerateAttributesInRange:NSMakeRange(0, str.length) options:(NSAttributedStringEnumerationReverse) usingBlock:^(NSDictionary *attrs, NSRange range, BOOL *stop) {
@@ -1182,30 +1310,30 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             NSMutableParagraphStyle *paragraphStyle = attrs[NSParagraphStyleAttributeName];
             paragraphStyle.paragraphSpacing = 0;
         }
-
+        
         // Check only the last paragraph
         *stop = YES;
     }];
-
+    
     return str;
 }
 
 - (NSAttributedString *)renderString:(NSString *)string withPrefix:(NSString *)prefix forEvent:(MXEvent *)event
 {
     NSMutableAttributedString *str;
-
+    
     if (prefix)
     {
         str = [[NSMutableAttributedString alloc] initWithString:prefix];
-
+        
         // Apply the prefix font and color on the prefix
         NSRange prefixRange = NSMakeRange(0, prefix.length);
         [str addAttribute:NSForegroundColorAttributeName value:_prefixTextColor range:prefixRange];
         [str addAttribute:NSFontAttributeName value:_prefixTextFont range:prefixRange];
-
+        
         // And append the string rendered according to event state
         [str appendAttributedString:[self renderString:string forEvent:event]];
-
+        
         return str;
     }
     else
@@ -1218,11 +1346,11 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
 - (NSString*)sanitiseHTML:(NSString*)htmlString
 {
     NSString *html = htmlString;
-
+    
     // List all HTML tags used in htmlString
     NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"<(\\w+)[^>]*>" options:NSRegularExpressionCaseInsensitive error:nil];
     NSArray<NSTextCheckingResult *> *tagsInTheHTML = [regex matchesInString:htmlString options:0 range:NSMakeRange(0, htmlString.length)];
-
+    
     // Find those that are not allowed
     NSMutableSet *tagsToRemoveSet = [NSMutableSet set];
     for (NSTextCheckingResult *result in tagsInTheHTML)
@@ -1233,24 +1361,24 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
             [tagsToRemoveSet addObject:tag];
         }
     }
-
+    
     // And remove them from the HTML string
     if (tagsToRemoveSet.count)
     {
         NSArray *tagsToRemove = tagsToRemoveSet.allObjects;
-
+        
         NSString *tagsToRemoveString = tagsToRemove[0];
         for (NSInteger i = 1; i < tagsToRemove.count; i++)
         {
             tagsToRemoveString  = [tagsToRemoveString stringByAppendingString:[NSString stringWithFormat:@"|%@", tagsToRemove[i]]];
         }
-
+        
         html = [html stringByReplacingOccurrencesOfString:[NSString stringWithFormat:@"<\\/?(%@)[^>]*>", tagsToRemoveString]
                                                withString:@""
                                                   options:NSRegularExpressionSearch | NSCaseInsensitiveSearch
                                                     range:NSMakeRange(0, html.length)];
     }
-
+    
     // TODO: Sanitise other things: attributes, URL schemes, etc
     
     return html;
@@ -1276,37 +1404,37 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     UIColor *textColor;
     switch (event.mxkState)
     {
-        case MXKEventStateDefault:
+            case MXKEventStateDefault:
             if (_isForSubtitle)
-            {
-                textColor = _subTitleTextColor;
-            }
+        {
+            textColor = _subTitleTextColor;
+        }
             else
-            {
-                textColor = _defaultTextColor;
-            }
+        {
+            textColor = _defaultTextColor;
+        }
             break;
-        case MXKEventStateBing:
+            case MXKEventStateBing:
             textColor = _bingTextColor;
             break;
-        case MXKEventStateSending:
+            case MXKEventStateSending:
             textColor = _sendingTextColor;
             break;
-        case MXKEventStateSendingFailed:
-        case MXKEventStateUnsupported:
-        case MXKEventStateUnexpected:
-        case MXKEventStateUnknownType:
+            case MXKEventStateSendingFailed:
+            case MXKEventStateUnsupported:
+            case MXKEventStateUnexpected:
+            case MXKEventStateUnknownType:
             textColor = _errorTextColor;
             break;
         default:
             if (_isForSubtitle)
-            {
-                textColor = _subTitleTextColor;
-            }
+        {
+            textColor = _subTitleTextColor;
+        }
             else
-            {
-                textColor = _defaultTextColor;
-            }
+        {
+            textColor = _defaultTextColor;
+        }
             break;
     }
     return textColor;
@@ -1314,7 +1442,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
 
 /**
  Get the text font to use according to the event state.
-
+ 
  @param event the event.
  @return the text font.
  */
@@ -1351,9 +1479,9 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     // kills room aliases (like #matrix:matrix.org).
     // So, escape them if they are not followed by a space
     NSString *str = [markdownString stringByReplacingOccurrencesOfString:@"(#+)[^( |#)]" withString:@"\\\\$0" options:NSRegularExpressionSearch range:NSMakeRange(0, markdownString.length)];
-
+    
     NSString *htmlString = [markdownParser HTMLStringFromMarkdownString:str];
-
+    
     // Strip start and end <p> tags else you get 'orrible spacing
     if ([htmlString hasPrefix:@"<p>"])
     {
@@ -1363,7 +1491,7 @@ NSString *const kMXKEventFormatterLocalEventIdPrefix = @"MXKLocalId_";
     {
         htmlString = [htmlString substringToIndex:htmlString.length - 4];
     }
-
+    
     return htmlString;
 }
 

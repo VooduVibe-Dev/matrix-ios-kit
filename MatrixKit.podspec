@@ -23,7 +23,7 @@ Pod::Spec.new do |s|
   
   s.requires_arc  = true
 
-  s.dependency 'MatrixSDK', '0.6.17'
+  s.dependency 'MatrixSDK', :git => 'https://github.com/VooduVibe-Dev/matrix-ios-sdk-v0.6.17.git'
   s.dependency 'HPGrowingTextView', '~> 1.1'
   s.dependency 'libPhoneNumber-iOS', '~> 0.8.14'
   s.dependency 'DTCoreText', '~> 1.6.17'

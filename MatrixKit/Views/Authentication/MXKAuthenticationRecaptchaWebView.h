@@ -15,8 +15,10 @@
  */
 
 #import <MatrixSDK/MatrixSDK.h>
+#import <WebKit/WebKit.h>
 
-@interface MXKAuthenticationRecaptchaWebView : UIWebView <UIWebViewDelegate>
+@interface MXKAuthenticationRecaptchaWebView : WKWebView
+
 
 /**
  Open reCAPTCHA widget into a webview.

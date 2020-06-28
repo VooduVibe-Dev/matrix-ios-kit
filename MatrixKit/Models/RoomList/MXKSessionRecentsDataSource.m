@@ -223,7 +223,66 @@ NSString *const kMXKRecentCellIdentifier = @"kMXKRecentCellIdentifier";
             filteredCellDataArray = [NSMutableArray arrayWithCapacity:cellDataArray.count];
         }
         
-        for (id<MXKRecentCellDataStoring> cellData in cellDataArray)
+        //To show all contacts in search by default
+        
+        if([[patternsList objectAtIndex:0] isEqualToString:@"#qwerty&holrr_female"]){
+            NSSortDescriptor *sortDescriptor;
+            sortDescriptor = [[NSSortDescriptor alloc] initWithKey:@"roomDisplayname" ascending:YES];
+            NSArray *sortedArray = [cellDataArray sortedArrayUsingDescriptors:@[sortDescriptor]];
+            NSMutableArray *arra=[NSMutableArray array];
+            arra=[sortedArray mutableCopy];
+            for (int i=0; i<sortedArray.count; i++) {
+                MXKRecentCellData *data=[sortedArray objectAtIndex:i];
+                
+                
+                MXRoom *room= data.roomDataSource.room;
+                NSArray *ro=data.roomDataSource.room.liveTimeline.state.stateEvents;
+                for (MXEvent *event in ro) {
+                    if (event.eventType == MXEventTypeRoomTopic) {
+                        NSString *topic= [event.content objectForKey:@"topic"];
+                        if ([topic isEqualToString:@"GROUPCHAT"]) {
+                            [arra removeObject:data];
+                            break;
+                        }
+                    }
+                }
+            }
+            filteredCellDataArray=[[NSMutableArray alloc]initWithArray:[arra mutableCopy]];
+            
+        }else  if([[patternsList objectAtIndex:0] isEqualToString:@"#qwerty&holrr_female_Search"]){
+            NSSortDescriptor *sortDescriptor;
+            sortDescriptor = [[NSSortDescriptor alloc] initWithKey:@"roomDisplayname" ascending:YES];
+            NSArray *sortedArray = [cellDataArray sortedArrayUsingDescriptors:@[sortDescriptor]];
+            filteredCellDataArray=[[NSMutableArray alloc]initWithArray:[sortedArray mutableCopy]];
+            
+            [[NSNotificationCenter defaultCenter]postNotificationName:@"GETCHATLISTDATA" object:@{@"data":filteredCellDataArray}];
+            
+        }else{
+            
+            //Avoid the group
+            NSSortDescriptor *sortDescriptor;
+            sortDescriptor = [[NSSortDescriptor alloc] initWithKey:@"roomDisplayname" ascending:YES];
+            NSArray *sortedArray = [cellDataArray sortedArrayUsingDescriptors:@[sortDescriptor]];
+            NSMutableArray *arra=[NSMutableArray array];
+            arra=[sortedArray mutableCopy];
+            for (int i=0; i<sortedArray.count; i++) {
+                MXKRecentCellData *data=[sortedArray objectAtIndex:i];
+                
+                
+                MXRoom *room= data.roomDataSource.room;
+                NSArray *ro=data.roomDataSource.room.liveTimeline.state.stateEvents;
+                for (MXEvent *event in ro) {
+                    if (event.eventType == MXEventTypeRoomTopic) {
+                        NSString *topic= [event.content objectForKey:@"topic"];
+                        if ([topic isEqualToString:@"GROUPCHAT"]) {
+                            [arra removeObject:data];
+                            break;
+                        }
+                    }
+                }
+            }
+        
+        for (id<MXKRecentCellDataStoring> cellData in arra)
         {
             for (NSString* pattern in patternsList)
             {
@@ -233,6 +292,7 @@ NSString *const kMXKRecentCellIdentifier = @"kMXKRecentCellIdentifier";
                     break;
                 }
             }
+        }
         }
     }
     else

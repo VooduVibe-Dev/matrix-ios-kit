@@ -429,7 +429,7 @@
     }
     
     if (self.delegate) {
-        [self.delegate contactListViewController:self didSelectContact:contact.contactID];
+        [self.delegate contactListViewController:self didSelectAContact:contact.contactID];
     }
 }
 

@@ -8,13 +8,13 @@ target "MatrixKitSample" do
 
 # Different flavours of pods to Matrix SDK
 # The tagged version on which this version of MatrixKit has been built
-pod 'MatrixSDK', '0.6.17'
+#pod 'MatrixSDK', '0.6.17'
 
 # The lastest release available on the CocoaPods repository 
 #pod 'MatrixSDK'
 
-# The develop branch version
-#pod 'MatrixSDK', :git => 'https://github.com/matrix-org/matrix-ios-sdk.git', :branch => 'develop'
+# The modified for juuj version (removing UIWebview, and renaming didSelectContact method)
+pod 'MatrixSDK', :git => 'https://github.com/VooduVibe-Dev/matrix-ios-sdk-v0.6.17.git'
 
 # The one used for developping both MatrixSDK and MatrixKit
 # Note that MatrixSDK must be cloned into a folder called matrix-ios-sdk next to the MatrixKit folder

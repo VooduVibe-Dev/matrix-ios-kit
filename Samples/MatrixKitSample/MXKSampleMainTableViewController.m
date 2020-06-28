@@ -883,7 +883,7 @@
 
 #pragma mark - MXKContactListViewControllerDelegate
 
-- (void)contactListViewController:(MXKContactListViewController *)contactListViewController didSelectContact:(NSString *)contactId
+- (void)contactListViewController:(MXKContactListViewController *)contactListViewController didSelectAContact:(NSString *)contactId
 {
     selectedContact = [[MXKContactManager sharedManager] contactWithContactID:contactId];
     NSLog(@"    -> %@ has been selected", selectedContact.displayName);

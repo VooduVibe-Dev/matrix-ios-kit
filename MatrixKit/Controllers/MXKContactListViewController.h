@@ -35,7 +35,7 @@
  @param contactListViewController the `MXKContactListViewController` instance.
  @param contactId the id of the selected contact.
  */
-- (void)contactListViewController:(MXKContactListViewController *)contactListViewController didSelectContact:(NSString*)contactId;
+- (void)contactListViewController:(MXKContactListViewController *)contactListViewController didSelectAContact:(NSString*)contactId;
 
 /**
  Tells the delegate that the user tapped a contact thumbnail.

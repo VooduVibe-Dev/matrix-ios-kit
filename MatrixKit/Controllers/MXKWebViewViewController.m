@@ -18,7 +18,43 @@
 
 #import "NSBundle+MatrixKit.h"
 
+#import <JavaScriptCore/JavaScriptCore.h>
+
+NSString *const kMXKWebViewViewControllerPostMessageJSLog = @"jsLog";
+
+// Override console.* logs methods to send WebKit postMessage events to native code.
+// Note: this code has a minimal support of multiple parameters in console.log()
+NSString *const kMXKWebViewViewControllerJavaScriptEnableLog =
+@"console.debug = console.log; console.info = console.log; console.warn = console.log; console.error = console.log;" \
+@"console.log = function() {" \
+@"    var msg = arguments[0];" \
+@"    for (var i = 1; i < arguments.length; i++) {" \
+@"        msg += ' ' + arguments[i];" \
+@"    }" \
+@"    window.webkit.messageHandlers.%@.postMessage(msg);" \
+@"};";
+
+@interface MXKWebViewViewController ()
+{
+    BOOL enableDebug;
+
+    //  Right buttons bar state before loading the webview
+    NSArray<UIBarButtonItem *> *originalRightBarButtonItems;
+}
+
+@end
+
 @implementation MXKWebViewViewController
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self)
+    {
+        enableDebug = NO;
+    }
+    return self;
+}
 
 - (id)initWithURL:(NSString*)URL
 {
@@ -40,16 +76,40 @@
     return self;
 }
 
+- (void)enableDebug
+{
+    // We can only call addScriptMessageHandler on a given message only once
+    if (enableDebug)
+    {
+        return;
+    }
+    enableDebug = YES;
+
+    // Redirect all console.* logging methods into a WebKit postMessage event with name "jsLog"
+    [webView.configuration.userContentController addScriptMessageHandler:self name:kMXKWebViewViewControllerPostMessageJSLog];
+
+    NSString *javaScriptString = [NSString stringWithFormat:kMXKWebViewViewControllerJavaScriptEnableLog, kMXKWebViewViewControllerPostMessageJSLog];
+
+    [webView evaluateJavaScript:javaScriptString completionHandler:nil];
+}
+
+- (void)finalizeInit
+{
+    [super finalizeInit];
+}
+
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+
+    originalRightBarButtonItems = self.navigationItem.rightBarButtonItems;
     
     // Init the webview
-    webView = [[UIWebView alloc] initWithFrame:self.view.frame];
+    webView = [[WKWebView alloc] initWithFrame:self.view.frame];
     webView.backgroundColor= [UIColor whiteColor];
-    webView.delegate = self;
-    webView.scalesPageToFit = YES;
-    
+    webView.navigationDelegate = self;
+    webView.UIDelegate = self;
+
     [webView setTranslatesAutoresizingMaskIntoConstraints:NO];
     [self.view addSubview:webView];
     
@@ -112,7 +172,7 @@
 {
     if (webView)
     {
-        webView.delegate = nil;
+        webView.navigationDelegate = nil;
         [webView stopLoading];
         [webView removeFromSuperview];
         webView = nil;
@@ -172,29 +232,123 @@
     }
 }
 
-#pragma mark - UIWebViewDelegate
+#pragma mark - WKNavigationDelegate
 
-- (void)webViewDidFinishLoad:(UIWebView *)theWebView
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
 {
-    if (theWebView == webView)
+    // Handle back button visibility here
+    BOOL canGoBack = webView.canGoBack;
+
+    if (_localHTMLFile.length && !canGoBack)
     {
-        // Handle back button visibility here
-        BOOL canGoBack = webView.canGoBack;
-        
-        if (_localHTMLFile.length && !canGoBack)
+        // Check whether the current content is not the local html file
+        canGoBack = (![webView.URL.absoluteString isEqualToString:@"about:blank"]);
+    }
+
+    if (canGoBack)
+    {
+        self.navigationItem.rightBarButtonItem = backButton;
+    }
+    else
+    {
+        // Reset the original state
+        self.navigationItem.rightBarButtonItems = originalRightBarButtonItems;
+    }
+}
+
+- (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential * _Nullable credential))completionHandler
+{
+    NSURLProtectionSpace *protectionSpace = [challenge protectionSpace];
+    
+    // We handle here only the server trust authentication.
+    // We fallback to the default logic for other cases.
+    if (protectionSpace.authenticationMethod != NSURLAuthenticationMethodServerTrust || !protectionSpace.serverTrust)
+    {
+        completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+        return;
+    }
+    
+    SecTrustRef serverTrust = [protectionSpace serverTrust];
+    
+    // Check first whether there are some pinned certificates (certificate included in the bundle).
+    NSArray *paths = [[NSBundle mainBundle] pathsForResourcesOfType:@"cer" inDirectory:@"."];
+    if (paths.count)
+    {
+        NSMutableArray *pinnedCertificates = [NSMutableArray array];
+        for (NSString *path in paths)
         {
-            // Check whether the current content is not the local html file
-            canGoBack = (![webView.request.URL.absoluteString isEqualToString:@"about:blank"]);
+            NSData *certificateData = [NSData dataWithContentsOfFile:path];
+            [pinnedCertificates addObject:(__bridge_transfer id)SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificateData)];
         }
-        
-        if (canGoBack)
+        // Only use these certificates to pin against, and do not trust the built-in anchor certificates.
+        SecTrustSetAnchorCertificates(serverTrust, (__bridge CFArrayRef)pinnedCertificates);
+    }
+    /*else
+    {
+        // Check whether some certificates have been trusted by the user (self-signed certificates support).
+        NSSet<NSData *> *certificates = [MXAllowedCertificates sharedInstance].certificates;
+        if (certificates.count)
         {
-            self.navigationItem.rightBarButtonItem = backButton;
+            NSMutableArray *allowedCertificates = [NSMutableArray array];
+            for (NSData *certificateData in certificates)
+            {
+                [allowedCertificates addObject:(__bridge_transfer id)SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificateData)];
+            }
+            // Add all the allowed certificates to the chain of trust
+            SecTrustSetAnchorCertificates(serverTrust, (__bridge CFArrayRef)allowedCertificates);
+            // Reenable trusting the built-in anchor certificates in addition to those passed in via the SecTrustSetAnchorCertificates API.
+            SecTrustSetAnchorCertificatesOnly(serverTrust, false);
         }
-        else
+    }*/
+    
+    // Re-evaluate the trust policy
+    SecTrustResultType secresult = kSecTrustResultInvalid;
+    if (SecTrustEvaluate(serverTrust, &secresult) != errSecSuccess)
+    {
+        // Reject the server auth if an error occurs
+        completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace, nil);
+    }
+    else
+    {
+        switch (secresult)
         {
-            self.navigationItem.rightBarButtonItem = nil;
+            case kSecTrustResultUnspecified:    // The OS trusts this certificate implicitly.
+            case kSecTrustResultProceed:        // The user explicitly told the OS to trust it.
+            {
+                NSURLCredential *credential = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+                completionHandler(NSURLSessionAuthChallengeUseCredential, credential);
+                break;
+            }
+                
+            default:
+            {
+                completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+                break;
+            }
         }
+    }
+}
+
+#pragma mark - WKUIDelegate
+
+- (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(nonnull WKWebViewConfiguration *)configuration forNavigationAction:(nonnull WKNavigationAction *)navigationAction windowFeatures:(nonnull WKWindowFeatures *)windowFeatures
+{
+    // Make sure we open links with `target="_blank"` within this webview
+    if (!navigationAction.targetFrame.isMainFrame)
+    {
+        [webView loadRequest:navigationAction.request];
+    }
+
+    return nil;
+}
+
+#pragma mark - WKScriptMessageHandler
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message
+{
+    if ([message.name isEqualToString:kMXKWebViewViewControllerPostMessageJSLog])
+    {
+        NSLog(@"-- JavaScript: %@", message.body);
     }
 }
 

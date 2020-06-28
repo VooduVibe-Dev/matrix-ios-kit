@@ -1661,12 +1661,14 @@ NSString *const kCmdChangeRoomTopic = @"/topic";
     else if ([roomMember.userId isEqualToString:self.mainSession.myUser.userId])
     {
         // Prepare emote
-        inputToolbarView.textMessage = @"/me ";
+        //inputToolbarView.textMessage = @"/me ";
+        inputToolbarView.textMessage = @"";
     }
     else
     {
         // Bing the member
-        inputToolbarView.textMessage = [NSString stringWithFormat:@"%@: ", memberName];
+        //inputToolbarView.textMessage = [NSString stringWithFormat:@"%@: ", memberName];
+        inputToolbarView.textMessage = @"";
     }
     
     [inputToolbarView becomeFirstResponder];

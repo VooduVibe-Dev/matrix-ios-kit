@@ -15,7 +15,7 @@
  */
 
 #import "MXKAttachmentsViewController.h"
-
+#import <Webkit/WebKit.h>
 #import "MXKAlert.h"
 
 #import "MXKMediaCollectionViewCell.h"
@@ -30,6 +30,8 @@
 
 #import "MXKEventFormatter.h"
 
+#import <AVKit/AVKit.h>
+#import <AVFoundation/AVFoundation.h>
 @interface MXKAttachmentsViewController ()
 {
     /**
@@ -132,7 +134,7 @@
     }
     
     // Hide status bar
-    [UIApplication sharedApplication].statusBarHidden = YES;
+    [UIApplication sharedApplication].statusBarHidden = NO;
     
     // Handle here the case of splitviewcontroller use on iOS 8 and later.
     if (self.splitViewController && [self.splitViewController respondsToSelector:@selector(displayMode)])
@@ -392,7 +394,7 @@
 
 - (IBAction)hideNavigationBar
 {
-    self.navigationController.navigationBarHidden = YES;
+    self.navigationController.navigationBarHidden = NO;
     
     [navigationBarDisplayTimer invalidate];
     navigationBarDisplayTimer = nil;
@@ -585,12 +587,12 @@
                     height = minSize;
                 }
                 
-                UIWebView *animatedGifViewer = [[UIWebView alloc] initWithFrame:CGRectMake(0, 0, width, height)];
+                WKWebView *animatedGifViewer = [[WKWebView alloc] initWithFrame:CGRectMake(0, 0, width, height)];
                 animatedGifViewer.center = cell.customView.center;
                 animatedGifViewer.opaque = NO;
                 animatedGifViewer.backgroundColor = cell.customView.backgroundColor;
                 animatedGifViewer.contentMode = UIViewContentModeScaleAspectFit;
-                animatedGifViewer.scalesPageToFit = YES;
+                //animatedGifViewer.scalesPageToFit = YES;
                 animatedGifViewer.autoresizingMask = (UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin);
                 animatedGifViewer.userInteractionEnabled = NO;
                 [cell.customView addSubview:animatedGifViewer];
@@ -738,7 +740,7 @@
             {
                 [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
                 
-                selectedCell.moviePlayer = [[MPMoviePlayerController alloc] init];
+                selectedCell.moviePlayer = [[AVPlayerViewController alloc] init];
                 if (selectedCell.moviePlayer != nil)
                 {
                     // Switch in custom view
@@ -753,7 +755,7 @@
                     previewImage.center = selectedCell.customView.center;
                     [selectedCell.customView addSubview:previewImage];
                     
-                    selectedCell.moviePlayer.scalingMode = MPMovieScalingModeAspectFit;
+                    //selectedCell.moviePlayer.videoGravity = AVLayerVideoGravityResizeAspect;
                     selectedCell.moviePlayer.view.frame = selectedCell.customView.frame;
                     selectedCell.moviePlayer.view.center = selectedCell.customView.center;
                     selectedCell.moviePlayer.view.hidden = YES;
@@ -808,15 +810,15 @@
                     }
 
                     [[NSNotificationCenter defaultCenter] addObserver:self
-                                                             selector:@selector(moviePlayerPlaybackDidFinishNotification:)
-                                                                 name:MPMoviePlayerPlaybackDidFinishNotification
+                                                             selector:@selector(moviePlayerPlaybackDidFinishWithErrorNotification:)
+                                                                 name:AVPlayerItemFailedToPlayToEndTimeNotification
                                                                object:nil];
                 }
             }
             
             if (selectedCell.moviePlayer)
             {
-                if (selectedCell.moviePlayer.playbackState == MPMoviePlaybackStatePlaying)
+                if (selectedCell.moviePlayer.player.status == AVPlayerStatusReadyToPlay)
                 {
                     // Show or hide the navigation bar
 
@@ -842,7 +844,7 @@
                     }
 
                     // Apply the same display to the navigation bar
-                    self.navigationController.navigationBarHidden = !controlsVisible;
+                    self.navigationController.navigationBarHidden = NO;
 
                     navigationBarDisplayHandled = YES;
                     if (!self.navigationController.navigationBarHidden)
@@ -861,8 +863,8 @@
                     {
                         selectedCell.moviePlayer.view.hidden = NO;
                         selectedCell.centerIcon.hidden = YES;
-                        selectedCell.moviePlayer.contentURL = [NSURL fileURLWithPath:attachmentURL];
-                        [selectedCell.moviePlayer play];
+                        selectedCell.moviePlayer.player = [AVPlayer playerWithURL:[NSURL fileURLWithPath:attachmentURL]];;
+                        [selectedCell.moviePlayer.player play];
                         
                         // Do not animate the navigation bar on video playback
                         return;
@@ -907,8 +909,9 @@
                             {
                                 selectedCell.moviePlayer.view.hidden = NO;
                                 selectedCell.centerIcon.hidden = YES;
-                                selectedCell.moviePlayer.contentURL = [NSURL fileURLWithPath:attachment.cacheFilePath];
-                                [selectedCell.moviePlayer play];
+                                
+                                selectedCell.moviePlayer.player = [AVPlayer playerWithURL:[NSURL fileURLWithPath:attachment.cacheFilePath]];;
+                                [selectedCell.moviePlayer.player play];
                                 
                                 [pieChartView removeFromSuperview];
                                 
@@ -989,8 +992,8 @@
         // Stop potential attached player
         if (mediaCollectionViewCell.moviePlayer)
         {
-            [mediaCollectionViewCell.moviePlayer stop];
-            mediaCollectionViewCell.moviePlayer = nil;
+            [mediaCollectionViewCell.moviePlayer.player pause];
+            mediaCollectionViewCell.moviePlayer.player = nil;
         }
         // Remove added view in custon view
         NSArray *subViews = mediaCollectionViewCell.customView.subviews;
@@ -1046,26 +1049,15 @@
 
 #pragma mark - Movie Player
 
-- (void)moviePlayerPlaybackDidFinishNotification:(NSNotification *)notification
+- (void)moviePlayerPlaybackDidFinishWithErrorNotification:(NSNotification *)notification
 {
     NSDictionary *notificationUserInfo = [notification userInfo];
-    NSNumber *resultValue = [notificationUserInfo objectForKey:MPMoviePlayerPlaybackDidFinishReasonUserInfoKey];
-    MPMovieFinishReason reason = [resultValue intValue];
-    
-    // error cases
-    if (reason == MPMovieFinishReasonPlaybackError)
-    {
-        NSError *mediaPlayerError = [notificationUserInfo objectForKey:@"error"];
-        if (mediaPlayerError)
-        {
-            NSLog(@"[MXKAttachmentsVC] Playback failed with error description: %@", [mediaPlayerError localizedDescription]);
+    NSError *mediaPlayerError = [notificationUserInfo objectForKey:AVPlayerItemFailedToPlayToEndTimeErrorKey];
 
-            // Display the navigation bar so that the user can leave this screen
-            self.navigationController.navigationBarHidden = NO;
-
-            // Notify MatrixKit user
-            [[NSNotificationCenter defaultCenter] postNotificationName:kMXKErrorNotification object:mediaPlayerError];
-        }
+    if (mediaPlayerError){
+        NSLog(@"[MXKAttachmentsVC] Playback failed with error description: %@", [mediaPlayerError localizedDescription]);
+        // Notify MatrixKit user
+        [[NSNotificationCenter defaultCenter] postNotificationName:kMXKErrorNotification object:mediaPlayerError];
     }
 }
 

@@ -748,9 +748,9 @@ static MXKAccountOnCertificateChange _onCertificateChangeBlock;
     }
     
 #ifdef DEBUG
-    NSString *appId = [[NSUserDefaults standardUserDefaults] objectForKey:@"pusherAppIdDev"];
+    NSString *appId = @"com.vooduvibe"; //NSString *appId = [[NSUserDefaults standardUserDefaults] objectForKey:@"pusherAppIdDev"];
 #else
-    NSString *appId = [[NSUserDefaults standardUserDefaults] objectForKey:@"pusherAppIdProd"];
+    NSString *appId = @"com.vooduvibe"; //NSString *appId = [[NSUserDefaults standardUserDefaults] objectForKey:@"pusherAppIdProd"];
 #endif
     
     if (!appId)
@@ -762,9 +762,15 @@ static MXKAccountOnCertificateChange _onCertificateChangeBlock;
     NSString *appDisplayName = [NSString stringWithFormat:@"%@ (iOS)", [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"]];
     
     NSString *b64Token = [[MXKAccountManager sharedManager].apnsDeviceToken base64EncodedStringWithOptions:0];
+    
     NSDictionary *pushData = @{
-                               @"url": self.pushGatewayURL,
+                               @"url": [[NSUserDefaults standardUserDefaults]valueForKey:@"pushGatewayURL"],
                                };
+    
+    
+    //NSDictionary *pushData = @{
+      //                         @"url": self.pushGatewayURL,
+       //                        };
     
     NSString *deviceLang = [NSLocale preferredLanguages][0];
     
