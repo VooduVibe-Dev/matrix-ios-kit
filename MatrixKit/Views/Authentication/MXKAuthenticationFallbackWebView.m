@@ -16,7 +16,7 @@
 
 #import "MXKAuthenticationFallbackWebView.h"
 
-// Generic method to make a bridge between JS and the MKWebView
+// Generic method to make a bridge between JS and the UIWebView
 NSString *kMXKJavascriptSendObjectMessage = @"window.sendObjectMessage = function(parameters) {   \
 var iframe = document.createElement('iframe');                              \
 iframe.setAttribute('src', 'js:' + JSON.stringify(parameters));             \
@@ -113,7 +113,7 @@ sendObjectMessage({  \
     
     if ([urlString hasPrefix:@"js:"])
     {
-        // Listen only to scheme of the JS-MKWebView bridge
+        // Listen only to scheme of the JS-UIWebView bridge
         NSString *jsonString = [[[urlString componentsSeparatedByString:@"js:"] lastObject]  stringByReplacingPercentEscapesUsingEncoding:NSASCIIStringEncoding];
         NSData *jsonData = [jsonString dataUsingEncoding:NSUTF8StringEncoding];
         

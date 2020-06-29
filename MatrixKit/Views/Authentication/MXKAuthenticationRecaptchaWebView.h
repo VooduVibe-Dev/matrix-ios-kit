@@ -15,16 +15,16 @@
  */
 
 #import <MatrixSDK/MatrixSDK.h>
+
 #import <WebKit/WebKit.h>
 
 @interface MXKAuthenticationRecaptchaWebView : WKWebView
-
 
 /**
  Open reCAPTCHA widget into a webview.
  
  @param siteKey the site key.
- @param homeServer the home server URL.
+ @param homeServer the homeserver URL.
  @param callback the block called when the user has received reCAPTCHA response.
  */
 - (void)openRecaptchaWidgetWithSiteKey:(NSString*)siteKey fromHomeServer:(NSString*)homeServer callback:(void (^)(NSString *response))callback;
